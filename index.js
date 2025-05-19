@@ -231,11 +231,11 @@ Source Tree:
     if (this.diff && this.diffPath) {
       const diffAbsolutePath = path.resolve(this.diffPath);
       this.debug(
-        `Diff mode enabled. Comparing ${absolutePath} (before) with ${diffAbsolutePath} (current)`
+        `Diff mode enabled. Comparing ${diffAbsolutePath} (before) with ${absolutePath} (after)`
       );
 
       // Find all files in both directories for comparison
-      const diffFiles = await glob("**", {
+      const beforeFiles = await glob("**", {
         cwd: diffAbsolutePath,
         nodir: true,
         absolute: true,
@@ -244,14 +244,14 @@ Source Tree:
       });
 
       // Create maps for easier lookup
-      // currentFilesMap now represents the "before" state
-      const currentFilesMap = files.reduce((acc, file) => {
+      // afterFilesMap represents the current/"after" state
+      const afterFilesMap = files.reduce((acc, file) => {
         acc[path.relative(absolutePath, file)] = file;
         return acc;
       }, {});
 
-      // diffFilesMap now represents the "current" state
-      const diffFilesMap = diffFiles.reduce((acc, file) => {
+      // beforeFilesMap represents the "before" state from diffPath
+      const beforeFilesMap = beforeFiles.reduce((acc, file) => {
         acc[path.relative(diffAbsolutePath, file)] = file;
         return acc;
       }, {});
@@ -259,8 +259,8 @@ Source Tree:
       // Get all unique relative paths
       const allRelativePaths = [
         ...new Set([
-          ...Object.keys(currentFilesMap),
-          ...Object.keys(diffFilesMap),
+          ...Object.keys(beforeFilesMap),
+          ...Object.keys(afterFilesMap),
         ]),
       ];
 
@@ -271,7 +271,7 @@ Source Tree:
       let currentTree = {};
 
       // Build the current state tree first (only files in diffPath)
-      Object.keys(diffFilesMap).forEach((relativePath) => {
+      Object.keys(afterFilesMap).forEach((relativePath) => {
         const parts = relativePath.split(path.sep);
         let current = currentTree;
 
@@ -301,25 +301,25 @@ Source Tree:
         }
 
         // Handle file content and diff generation
-        const currentFile = currentFilesMap[relativePath];
-        const diffFile = diffFilesMap[relativePath];
+        const beforeFile = beforeFilesMap[relativePath];
+        const afterFile = afterFilesMap[relativePath];
 
         let diffContent = "";
 
-        if (currentFile && diffFile) {
+        if (beforeFile && afterFile) {
           // Both files exist - generate diff
-          let beforeContent, currentContent;
+          let beforeContent, afterContent;
 
           if (extension in this.custom_viewers) {
-            beforeContent = await this.custom_viewers[extension](currentFile);
-            currentContent = await this.custom_viewers[extension](diffFile);
+            beforeContent = await this.custom_viewers[extension](beforeFile);
+            afterContent = await this.custom_viewers[extension](afterFile);
           } else {
-            beforeContent = await this.readContent(currentFile, maxBytes);
-            currentContent = await this.readContent(diffFile, maxBytes);
+            beforeContent = await this.readContent(beforeFile, maxBytes);
+            afterContent = await this.readContent(afterFile, maxBytes);
           }
 
           // Skip files with no changes
-          if (beforeContent === currentContent) {
+          if (beforeContent === afterContent) {
             continue;
           }
 
@@ -327,7 +327,7 @@ Source Tree:
           const patch = diffLib.createPatch(
             relativePath,
             beforeContent,
-            currentContent,
+            afterContent,
             `a/${relativePath}`,
             `b/${relativePath}`,
             { context: 3 }
@@ -345,13 +345,13 @@ Source Tree:
             code: formattedDiff,
             status: "modified",
           });
-        } else if (currentFile && !diffFile) {
-          // File deleted in diff (was in before, not in current)
+        } else if (beforeFile && !afterFile) {
+          // File deleted in after (was in before, not in after)
           let content;
           if (extension in this.custom_viewers) {
-            content = await this.custom_viewers[extension](currentFile);
+            content = await this.custom_viewers[extension](beforeFile);
           } else {
-            content = await this.readContent(currentFile, maxBytes);
+            content = await this.readContent(beforeFile, maxBytes);
           }
 
           // Format as a simplified deleted file notice without full content
@@ -363,13 +363,13 @@ Source Tree:
             code: patch,
             status: "deleted",
           });
-        } else if (!currentFile && diffFile) {
-          // File added in current (wasn't in before, is in current)
+        } else if (!beforeFile && afterFile) {
+          // File added in after (wasn't in before, is in after)
           let content;
           if (extension in this.custom_viewers) {
-            content = await this.custom_viewers[extension](diffFile);
+            content = await this.custom_viewers[extension](afterFile);
           } else {
-            content = await this.readContent(diffFile, maxBytes);
+            content = await this.readContent(afterFile, maxBytes);
           }
 
           // Format as a simplified new file notice with full content

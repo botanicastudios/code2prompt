@@ -5,7 +5,7 @@ console.log("\n=== WITH PATHS (DEFAULT) ===");
 const c2p1 = new Code2Prompt({
   path: "./2/",
   diffPath: "./1/",
-  diff: true,
+  diff: false,
   ignore: ["AGENT.md"],
   debugger: true,
   showProjectPath: true, // explicitly set to true (default)
