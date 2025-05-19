@@ -114,6 +114,7 @@ Diff Path: {{diffPath}}
 {{/if}}
 
 ---
+
 {{/if}}
       
 Source Tree:
@@ -126,10 +127,6 @@ Source Tree:
 
 {{#each files}}
 {{#if code}}
-### {{path}}{{#if status}} [{{status}}]{{/if}}
-
----
-
 {{{code}}}
 
 ---
@@ -234,7 +231,7 @@ Source Tree:
     if (this.diff && this.diffPath) {
       const diffAbsolutePath = path.resolve(this.diffPath);
       this.debug(
-        `Diff mode enabled. Comparing ${absolutePath} with ${diffAbsolutePath}`
+        `Diff mode enabled. Comparing ${absolutePath} (before) with ${diffAbsolutePath} (current)`
       );
 
       // Find all files in both directories for comparison
@@ -247,11 +244,13 @@ Source Tree:
       });
 
       // Create maps for easier lookup
+      // currentFilesMap now represents the "before" state
       const currentFilesMap = files.reduce((acc, file) => {
         acc[path.relative(absolutePath, file)] = file;
         return acc;
       }, {});
 
+      // diffFilesMap now represents the "current" state
       const diffFilesMap = diffFiles.reduce((acc, file) => {
         acc[path.relative(diffAbsolutePath, file)] = file;
         return acc;
@@ -268,6 +267,27 @@ Source Tree:
       // Sort paths to ensure consistent order
       allRelativePaths.sort();
 
+      // Create a separate tree just for the current state (diffPath)
+      let currentTree = {};
+
+      // Build the current state tree first (only files in diffPath)
+      Object.keys(diffFilesMap).forEach((relativePath) => {
+        const parts = relativePath.split(path.sep);
+        let current = currentTree;
+
+        for (let i = 0; i < parts.length - 1; i++) {
+          const part = parts[i];
+          current[part] = current[part] || {};
+          current = current[part];
+        }
+
+        const fileName = parts[parts.length - 1];
+        current[fileName] = relativePath;
+      });
+
+      // Use the current state tree for the source tree display
+      tree = currentTree;
+
       // Process each file and generate diffs
       for (const relativePath of allRelativePaths) {
         const extension = path.extname(relativePath).toLowerCase();
@@ -280,19 +300,6 @@ Source Tree:
           continue;
         }
 
-        // Set up the tree structure
-        const parts = relativePath.split(path.sep);
-        let current = tree;
-
-        for (let i = 0; i < parts.length - 1; i++) {
-          const part = parts[i];
-          current[part] = current[part] || {};
-          current = current[part];
-        }
-
-        const fileName = parts[parts.length - 1];
-        current[fileName] = relativePath;
-
         // Handle file content and diff generation
         const currentFile = currentFilesMap[relativePath];
         const diffFile = diffFilesMap[relativePath];
@@ -301,36 +308,37 @@ Source Tree:
 
         if (currentFile && diffFile) {
           // Both files exist - generate diff
-          let currentContent, diffContent;
+          let beforeContent, currentContent;
 
           if (extension in this.custom_viewers) {
-            currentContent = await this.custom_viewers[extension](currentFile);
-            diffContent = await this.custom_viewers[extension](diffFile);
+            beforeContent = await this.custom_viewers[extension](currentFile);
+            currentContent = await this.custom_viewers[extension](diffFile);
           } else {
-            currentContent = await this.readContent(currentFile, maxBytes);
-            diffContent = await this.readContent(diffFile, maxBytes);
+            beforeContent = await this.readContent(currentFile, maxBytes);
+            currentContent = await this.readContent(diffFile, maxBytes);
           }
 
           // Skip files with no changes
-          if (currentContent === diffContent) {
+          if (beforeContent === currentContent) {
             continue;
           }
 
-          // Generate a line-by-line diff instead of a patch
-          const diffResult = diffLib.diffLines(diffContent, currentContent);
+          // Generate a unified diff format (patch)
+          const patch = diffLib.createPatch(
+            relativePath,
+            beforeContent,
+            currentContent,
+            `a/${relativePath}`,
+            `b/${relativePath}`,
+            { context: 3 }
+          );
 
-          // Format the diff with + and - prefixes
-          let formattedDiff = "";
-          diffResult.forEach((part) => {
-            // Add prefixes: + for additions, - for deletions, nothing for context
-            const prefix = part.added ? "+ " : part.removed ? "- " : "  ";
-            const lines = part.value.split("\n").filter((line) => line !== "");
+          // Extract just the diff part (excluding the header lines)
+          const diffLines = patch.split("\n");
+          const diffContent = diffLines.slice(2).join("\n");
 
-            // Add the prefix to each line
-            lines.forEach((line) => {
-              formattedDiff += prefix + line + "\n";
-            });
-          });
+          // Format with custom header and code block - without extra spacing
+          const formattedDiff = `# file: ${relativePath}  |  change: modified\n\n\`\`\`diff\n${diffContent}\n\`\`\``;
 
           filesArray.push({
             path: relativePath,
@@ -338,7 +346,7 @@ Source Tree:
             status: "modified",
           });
         } else if (currentFile && !diffFile) {
-          // File added in current
+          // File deleted in diff (was in before, not in current)
           let content;
           if (extension in this.custom_viewers) {
             content = await this.custom_viewers[extension](currentFile);
@@ -346,19 +354,17 @@ Source Tree:
             content = await this.readContent(currentFile, maxBytes);
           }
 
-          // Format added files with + prefix on each line
-          const formattedContent = content
-            .split("\n")
-            .map((line) => (line === "" ? "" : `+ ${line}`))
-            .join("\n");
+          // Format as a simplified deleted file notice without full content
+          const lineCount = content.split("\n").length;
+          const patch = `# file: ${relativePath}  |  change: deleted\n\n\`\`\`diff\n@@ -1,${lineCount} +0,0 @@\n-// contents omitted …\n\`\`\``;
 
           filesArray.push({
             path: relativePath,
-            code: formattedContent,
-            status: "added",
+            code: patch,
+            status: "deleted",
           });
         } else if (!currentFile && diffFile) {
-          // File deleted from diff
+          // File added in current (wasn't in before, is in current)
           let content;
           if (extension in this.custom_viewers) {
             content = await this.custom_viewers[extension](diffFile);
@@ -366,16 +372,16 @@ Source Tree:
             content = await this.readContent(diffFile, maxBytes);
           }
 
-          // Format deleted files with - prefix on each line
-          const formattedContent = content
-            .split("\n")
-            .map((line) => (line === "" ? "" : `- ${line}`))
-            .join("\n");
+          // Format as a simplified new file notice with full content
+          const lines = content.split("\n");
+          const patch = `# file: ${relativePath}  |  change: new\n\n\`\`\`diff\n@@ -0,0 +1,${
+            lines.length
+          } @@\n+${content.replace(/\n/g, "\n+")}\n\`\`\``;
 
           filesArray.push({
             path: relativePath,
-            code: formattedContent,
-            status: "deleted",
+            code: patch,
+            status: "added",
           });
         }
       }
@@ -408,6 +414,10 @@ Source Tree:
                 );
                 content = await this.readContent(file, maxBytes);
               }
+              // Add header for files in non-diff mode to match the diff mode format
+              content = `# file: ${relativePath}\n\n\`\`\`${
+                extension.substring(1) || ""
+              }\n${content}\n\`\`\``;
               filesArray.push({ path: relativePath, code: content });
             } else {
               current[part] = current[part] || {};
