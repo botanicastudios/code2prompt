@@ -40,5 +40,8 @@
     "tiktoken": "^1.0.17",
     "zod": "^3.24.1",
     "zod-gpt": "^0.16.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
