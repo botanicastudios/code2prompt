@@ -20,12 +20,6 @@ Install `code2prompt` using npm:
 npm install code2prompt
 ```
 
-Or using yarn:
-
-```bash
-yarn add code2prompt
-```
-
 ## Usage
 
 Here's a simple example on how to use code2prompt to generate a prompt from your codebase:
